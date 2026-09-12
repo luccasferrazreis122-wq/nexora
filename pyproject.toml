@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexora-backend"
+version = "0.1.0"
+description = "Backend privado da NEXORA para FZ Optimizer"
+requires-python = ">=3.12"
+dependencies = ["fastapi==0.141.1", "uvicorn==0.52.4", "openai==3.13.0"]
+
+[project.scripts]
+nexora-admin = "nexora_backend.admin:main"
+
+[tool.setuptools]
+packages = ["nexora_backend"]
+package-dir = {nexora_backend = "."}
+include-package-data = false

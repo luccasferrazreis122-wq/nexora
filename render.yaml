@@ -1,0 +1,26 @@
+# Use nexora_backend como raiz de um repositório separado no Render.
+services:
+  - type: web
+    name: nexora-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install .
+    startCommand: uvicorn nexora_backend.api:create_app --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --limit-concurrency 32
+    healthCheckPath: /health
+    disk:
+      name: nexora-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.12"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: NEXORA_DATABASE
+        value: /var/data/nexora.sqlite3
+      - key: NEXORA_MODEL
+        value: gpt-5.4-mini
+      - key: NEXORA_USER_DAILY_REQUESTS
+        value: "30"
+      - key: NEXORA_GLOBAL_DAILY_REQUESTS
+        value: "300"
