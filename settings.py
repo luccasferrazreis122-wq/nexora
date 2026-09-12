@@ -14,6 +14,9 @@ class Settings:
     access_seconds: int = 900
     refresh_seconds: int = 2592000
     max_output_tokens: int = 650
+    trials_enabled: bool = True
+    trial_daily_registrations: int = 20
+    trial_peer_daily_registrations: int = 3
 
     @classmethod
     def from_env(cls):
@@ -34,4 +37,7 @@ class Settings:
             global_daily_requests=positive("NEXORA_GLOBAL_DAILY_REQUESTS", 300),
             user_minute_requests=positive("NEXORA_USER_MINUTE_REQUESTS", 5),
             global_minute_requests=positive("NEXORA_GLOBAL_MINUTE_REQUESTS", 30),
+            trials_enabled=os.environ.get("NEXORA_TRIALS_ENABLED", "1") == "1",
+            trial_daily_registrations=positive("NEXORA_TRIAL_DAILY_REGISTRATIONS", 20),
+            trial_peer_daily_registrations=positive("NEXORA_TRIAL_PEER_DAILY_REGISTRATIONS", 3),
         )

@@ -1,5 +1,8 @@
 """PostgreSQL externo em produção gratuita; SQLite disponível para testes locais."""
 import hashlib
+import os
+import shutil
+import tempfile
 import secrets
 import sqlite3
 import time
@@ -16,6 +19,25 @@ class ServiceError(Exception):
 
 def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def postgres_ca_file():
+    import certifi
+    source = Path(certifi.where())
+    if not source.is_file():
+        raise RuntimeError("Arquivo de certificados ausente; reinstale certifi no ambiente do backend.")
+    if os.name != "nt" or str(source).isascii():
+        yield str(source)
+        return
+    # libpq/OpenSSL no Windows pode interpretar incorretamente caminhos com acentos.
+    # Copiamos somente certificados públicos; nunca a conexão ou a senha.
+    with tempfile.TemporaryDirectory(prefix="nexora-ca-") as directory:
+        target = Path(directory) / "cacert.pem"
+        if not str(target).isascii():
+            raise RuntimeError("Configure TEMP para uma pasta sem acentos para acessar os certificados PostgreSQL.")
+        shutil.copyfile(source, target)
+        yield str(target)
 
 
 class PostgresConnection:
@@ -54,16 +76,19 @@ class Store:
                     scope TEXT NOT NULL, bucket INTEGER NOT NULL, period INTEGER NOT NULL,
                     count INTEGER NOT NULL, PRIMARY KEY(scope, bucket, period)
                 );
+                CREATE TABLE IF NOT EXISTS installations (
+                    hash TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id)
+                );
             """)
 
     @contextmanager
     def transaction(self):
         if self.postgres:
             import psycopg
-            import certifi
             from psycopg.rows import dict_row
-            with psycopg.connect(self.settings.database, row_factory=dict_row,
-                                 connect_timeout=15, sslmode="verify-full", sslrootcert=certifi.where()) as connection:
+            with postgres_ca_file() as ca_file, psycopg.connect(
+                    self.settings.database, row_factory=dict_row,
+                    connect_timeout=15, sslmode="verify-full", sslrootcert=ca_file) as connection:
                 with connection.transaction():
                     connection.execute("SET LOCAL lock_timeout = '10s'")
                     connection.execute("SET LOCAL statement_timeout = '20s'")
@@ -152,6 +177,36 @@ class Store:
                 "access_expires_at": access_expires,
                 "entitlement_expires_at": expires,
                 "user_id": user["id"],
+            }
+
+    def trial(self, secret, peer):
+        """A mesma credencial recupera o mesmo prazo, inclusive após resposta perdida."""
+        now = self.clock()
+        with self.transaction() as db:
+            user = db.execute("""SELECT u.* FROM installations i JOIN users u
+                                 ON u.id=i.user_id WHERE i.hash=?""", (digest(secret),)).fetchone()
+            if user is None:
+                if not self.settings.trials_enabled:
+                    raise ServiceError(403, "trials_unavailable")
+                self._consume(db, [
+                    ("trial-global", 86400, self.settings.trial_daily_registrations),
+                    ("trial-peer:" + digest(peer), 86400, self.settings.trial_peer_daily_registrations),
+                ])
+                uid = uuid.uuid4().hex
+                db.execute("INSERT INTO users(id,label,days,expires_at) VALUES(?,?,?,?)",
+                           (uid, "Teste automático " + uid[:8], 7, now + 7 * 86400))
+                db.execute("INSERT INTO installations VALUES(?,?)", (digest(secret), uid))
+                user = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+            if user["disabled"] or user["expires_at"] <= now:
+                raise ServiceError(403, "access_expired")
+            expires = user["expires_at"]
+            db.execute("DELETE FROM tokens WHERE user_id=?", (user["id"],))
+            access_expires = min(expires, now + self.settings.access_seconds)
+            return {
+                "access_token": self._token(db, user["id"], "access", access_expires),
+                "refresh_token": self._token(db, user["id"], "refresh", min(expires, now + self.settings.refresh_seconds)),
+                "expires_in": int(access_expires - now),
+                "entitlement_expires_at": expires, "user_id": user["id"],
             }
 
     def _consume(self, db, limits):

@@ -150,3 +150,33 @@ HTTP local requer parâmetro explícito usado nos testes.
 O Dockerfile é uma alternativa ao runtime Python. Nesse caso, use esta pasta como contexto
 do build e monte um volume persistente em `/var/data`, gravável pelo UID 10001. Não inclua
 segredos como build arguments ou arquivos da imagem.
+# Atualização 0.3: teste automático de 7 dias
+
+O aplicativo registra uma credencial aleatória individual em `POST /v1/auth/trial` ao abrir
+a página NEXORA pela primeira vez. Não pede código. O banco fixa a expiração em 7 dias
+(168 horas) segundo o relógio do servidor. Reconexões recuperam o mesmo usuário e prazo.
+O desktop salva a credencial com Windows DPAPI antes da requisição; o servidor guarda
+somente seu hash. A chave OpenAI continua exclusivamente no Render.
+
+Configurações opcionais (os padrões já funcionam):
+- `NEXORA_TRIALS_ENABLED=1`: use `0` para interromper novos cadastros, preservando existentes.
+- `NEXORA_TRIAL_DAILY_REGISTRATIONS=20`: novos testes por dia UTC no serviço inteiro.
+- `NEXORA_TRIAL_PEER_DAILY_REGISTRATIONS=3`: novos testes por origem de conexão/dia UTC.
+- Permanecem as cotas de chat: 30 pedidos/usuário/dia, 300 globais/dia, 5/usuário/minuto,
+  30 globais/minuto e saída limitada a 650 tokens por pedido.
+
+O peer é o endereço observado pelo servidor, sem confiar em X-Forwarded-For enviado
+pelo cliente. No Render ele pode ser um proxy compartilhado, então o limite por peer
+pode atingir usuários diferentes. Esses limites não garantem identidade por pessoa:
+apagar os dados locais ou criar outra identidade pode gerar outro teste. Para impedir
+isso de forma mais forte será necessário cadastro verificado. As cotas globais limitam
+as chamadas mesmo assim; não são um orçamento monetário exato.
+
+Contas manuais existentes mantêm seus prazos. `admin extend` renova o usuário automático;
+`admin revoke` bloqueia inclusive a recuperação pela credencial de instalação. Reemitir
+um código não revoga a credencial de instalação; use revoke para bloquear o usuário.
+O botão **Usar código** continua disponível para acessos fornecidos pelo administrador.
+
+Publicação: envie os arquivos do ZIP atualizado ao mesmo repositório no GitHub e aguarde
+o deploy no Render. O banco recebe somente a nova tabela `installations`, sem apagar
+contas existentes. Publique o novo executável depois do deploy do backend.

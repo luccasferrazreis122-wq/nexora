@@ -54,6 +54,10 @@ class Refresh(StrictModel):
     refresh_token: str = Field(min_length=40, max_length=100)
 
 
+class Trial(StrictModel):
+    installation_secret: str = Field(pattern=r"^nxi_[A-Za-z0-9_-]{43}$")
+
+
 class BodyLimit:
     """Limita inclusive corpos chunked antes de JSON/Pydantic alocarem memória."""
     def __init__(self, app, limit=131072):
@@ -146,6 +150,12 @@ def create_app(settings=None, provider=None):
     def activate(body: Activation, request: Request):
         store.throttle_auth(request.client.host if request.client else "unknown")
         return store.exchange(body.code, "activation")
+
+    @app.post("/v1/auth/trial")
+    def trial(body: Trial, request: Request):
+        peer = request.client.host if request.client else "unknown"
+        store.throttle_auth(peer)
+        return store.trial(body.installation_secret, peer)
 
     @app.post("/v1/auth/refresh")
     def refresh(body: Refresh, request: Request):
