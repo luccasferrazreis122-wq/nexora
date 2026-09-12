@@ -1,4 +1,4 @@
-"""SQLite para uma instância com disco persistente; cotas atômicas entre workers."""
+"""PostgreSQL externo em produção gratuita; SQLite disponível para testes locais."""
 import hashlib
 import secrets
 import sqlite3
@@ -18,10 +18,26 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+class PostgresConnection:
+    """Adapta as consultas internas fixas, nunca SQL fornecido pelo usuário."""
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql, parameters=()):
+        return self.connection.execute(sql.replace("?", "%s"), parameters)
+
+    def executescript(self, sql):
+        for statement in sql.replace("REAL", "DOUBLE PRECISION").split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+
 class Store:
     def __init__(self, settings, clock=time.time):
         self.settings, self.clock = settings, clock
-        Path(settings.database).parent.mkdir(parents=True, exist_ok=True)
+        self.postgres = settings.database.startswith(("postgres://", "postgresql://"))
+        if not self.postgres:
+            Path(settings.database).parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -42,6 +58,20 @@ class Store:
 
     @contextmanager
     def transaction(self):
+        if self.postgres:
+            import psycopg
+            import certifi
+            from psycopg.rows import dict_row
+            with psycopg.connect(self.settings.database, row_factory=dict_row,
+                                 connect_timeout=15, sslmode="verify-full", sslrootcert=certifi.where()) as connection:
+                with connection.transaction():
+                    connection.execute("SET LOCAL lock_timeout = '10s'")
+                    connection.execute("SET LOCAL statement_timeout = '20s'")
+                    # A mesma exclusão mútua do BEGIN IMMEDIATE, compartilhada entre instâncias.
+                    # O lock é liberado antes de chamar a OpenAI.
+                    connection.execute("SELECT pg_advisory_xact_lock(7349821001)")
+                    yield PostgresConnection(connection)
+            return
         db = sqlite3.connect(self.settings.database, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
@@ -135,7 +165,7 @@ class Store:
             if row and row["count"] >= limit:
                 raise ServiceError(429, "daily_limit" if period == 86400 else "rate_limit")
             db.execute("""INSERT INTO counters VALUES(?,?,?,1)
-                          ON CONFLICT(scope,bucket,period) DO UPDATE SET count=count+1""",
+                          ON CONFLICT(scope,bucket,period) DO UPDATE SET count=counters.count+1""",
                        (scope, bucket, period))
 
     def throttle_auth(self, peer):
@@ -163,6 +193,8 @@ class Store:
             return [dict(row) for row in db.execute("SELECT * FROM users ORDER BY label")]
 
     def backup(self, destination):
+        if self.postgres:
+            raise ValueError("Use pg_dump ou exportação do provedor para backup PostgreSQL")
         # SQLite backup API inclui transações concluídas, sem copiar arquivos abertos.
         with sqlite3.connect(self.settings.database) as source, sqlite3.connect(destination) as target:
             source.backup(target)

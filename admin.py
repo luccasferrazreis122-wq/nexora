@@ -1,6 +1,8 @@
 """Administração exclusivamente pelo terminal do servidor; sem endpoint administrativo."""
 import argparse
 import json
+import getpass
+from dataclasses import replace
 
 from .settings import Settings
 from .store import Store
@@ -8,6 +10,7 @@ from .store import Store
 
 def main():
     parser = argparse.ArgumentParser(description="Administração NEXORA")
+    parser.add_argument("--database-prompt", action="store_true", help="Solicita conexão PostgreSQL sem exibir ou salvar")
     sub = parser.add_subparsers(dest="command", required=True)
     create = sub.add_parser("create", help="Cria código individual, válido por 7 dias para resgate")
     create.add_argument("--label", required=True, help="Identificação interna; evite dados pessoais")
@@ -21,7 +24,13 @@ def main():
     backup = sub.add_parser("backup")
     backup.add_argument("destination")
     args = parser.parse_args()
-    store = Store(Settings.from_env())
+    settings = Settings.from_env()
+    if args.database_prompt:
+        database = getpass.getpass("Conexão PostgreSQL (oculta): ").strip()
+        if not database.startswith(("postgres://", "postgresql://")):
+            raise ValueError("Conexão PostgreSQL inválida")
+        settings = replace(settings, database=database)
+    store = Store(settings)
     if args.command == "create":
         user_id, code = store.provision(args.label, args.days)
         print(json.dumps({"user_id": user_id, "activation_code": code}))

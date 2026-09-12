@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Settings:
     api_key: str = field(default="", repr=False)
-    database: str = "data/nexora.sqlite3"
+    database: str = field(default="data/nexora.sqlite3", repr=False)
     model: str = "gpt-5.4-mini"
     user_daily_requests: int = 30
     global_daily_requests: int = 300
@@ -23,9 +23,12 @@ class Settings:
                 raise ValueError(f"{name} deve ser maior que zero")
             return value
 
+        database = os.environ.get("DATABASE_URL") or os.environ.get("NEXORA_DATABASE", "data/nexora.sqlite3")
+        if os.environ.get("NEXORA_REQUIRE_POSTGRES") == "1" and not database.startswith(("postgres://", "postgresql://")):
+            raise ValueError("Configure DATABASE_URL com o banco PostgreSQL externo")
         return cls(
             api_key=os.environ.get("OPENAI_API_KEY", "").strip(),
-            database=os.environ.get("NEXORA_DATABASE", "data/nexora.sqlite3"),
+            database=database,
             model=os.environ.get("NEXORA_MODEL", "gpt-5.4-mini"),
             user_daily_requests=positive("NEXORA_USER_DAILY_REQUESTS", 30),
             global_daily_requests=positive("NEXORA_GLOBAL_DAILY_REQUESTS", 300),

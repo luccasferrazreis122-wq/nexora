@@ -4,49 +4,70 @@ Esta pasta é um projeto independente do desktop. A API foi integrada ao FZ Opti
 mas precisa ser hospedada antes de funcionar em computadores de clientes.
 Nunca copie OPENAI_API_KEY para o aplicativo, arquivos .spec, código-fonte ou executável.
 
-## Caminho recomendado para quem não tem VPS
+## Publicação gratuita: Render Free + Neon Free
 
-1. Crie sua conta em https://render.com e uma conta no GitHub, se ainda não tiver.
-2. Crie um repositório privado `nexora-backend`. Envie **o conteúdo desta pasta** para a
-   raiz dele (README, arquivos Python, pyproject.toml, requirements, render.yaml etc.).
-   Não envie a pasta inteira do FZ Optimizer, `.env`, bancos, sessões, logs ou ambientes virtuais.
-   O arquivo `release/nexora-backend-publicacao.zip`, gerado na entrega, já contém somente
-   os arquivos necessários. Extraia seu conteúdo para o repositório, incluindo os arquivos ocultos.
-3. No Render, escolha **New > Blueprint**, conecte esse repositório e revise o serviço
-   descrito em `render.yaml`. Ele usa Python, plano Starter e disco persistente de 1 GB.
-   Confira o preço no painel antes de contratar. API OpenAI e hospedagem são cobradas separadamente.
-4. No campo secreto `OPENAI_API_KEY`, configure a chave diretamente no painel do Render.
-   Não coloque esse valor no GitHub nem no chat. A aplicação falha na inicialização se faltar a chave.
-5. Confirme que `NEXORA_DATABASE=/var/data/nexora.sqlite3` e que o disco está montado
-   em `/var/data`. Sem persistência, reinícios perderiam usuários, sessões e cotas.
-6. Após publicar, abra `https://SEU-SERVICO.onrender.com/health`. A resposta esperada é
-   `{"status":"ok"}`. Esse teste não chama a OpenAI nem comprova que há saldo/acesso ao modelo.
-7. Abra **Shell** no serviço e execute `nexora-admin create --label teste-interno --days 7`.
-   Guarde o `user_id` e entregue o `activation_code` somente ao usuário correspondente.
-8. Configure a URL pública no build desktop conforme o guia `NEXORA_IMPLEMENTACAO.md`.
-   Clique em **Ativar NEXORA**, informe o código e envie uma mensagem curta.
-   Esse último teste já chama a OpenAI e consome créditos.
+Esta versão 0.2 substitui o disco pago por PostgreSQL externo. É uma opção para testes
+iniciais, sujeita às cotas dos dois serviços. O consumo da OpenAI continua pago.
 
-O subdomínio `onrender.com` evita comprar um domínio próprio agora. O HTTPS é provido
-pela hospedagem. O Render exige serviço pago para disco persistente; não utilize um
-serviço gratuito efêmero com este SQLite.
+1. Crie uma conta em https://neon.com no plano **Free**, e crie um projeto `nexora`.
+2. No painel do Neon, abra **Connect** e copie a connection string PostgreSQL. Ela
+   contém senha: não envie pelo chat nem coloque no GitHub. Use um banco exclusivo da NEXORA.
+3. Atualize o repositório GitHub com o conteúdo extraído do ZIP atualizado
+   `release/nexora-backend-publicacao.zip`. Substitua também `render.yaml`, `store.py`,
+   `settings.py`, `admin.py`, `pyproject.toml` e `requirements.txt`. Não envie o ZIP fechado.
+4. No Render, escolha **New > Web Service**, selecione o repositório `nexora` e configure:
+   - Language/Runtime: **Python 3** (se detectar Docker, mude para Python).
+   - Branch: `main`; Root Directory: deixe vazio.
+   - Build Command: `pip install .`
+   - Start Command: `uvicorn nexora_backend.api:create_app --factory --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-proxy-headers --limit-concurrency 32`
+   - Instance Type: **Free**. Não adicione disco, banco Render ou serviço pago.
+5. Em Environment Variables configure:
+   - `PYTHON_VERSION`: `3.12.12`
+   - `OPENAI_API_KEY`: a chave diretamente no campo secreto do Render.
+   - `DATABASE_URL`: a conexão PostgreSQL do Neon, no campo secreto do Render.
+   - `NEXORA_REQUIRE_POSTGRES`: `1`
+6. Publique. A rota `/health` deve retornar `{"status":"ok"}`. Esse teste não verifica
+   saldo/modelo na OpenAI. O `render.yaml` também foi alterado para `plan: free`, sem disco,
+   caso você prefira importar por Blueprint. Se pedirem cartão, não escolha plano pago
+   para contornar: confira se o repositório já contém a configuração gratuita.
+7. Emita um código pelo terminal local conforme a próxima seção, pois o Render Free
+   não oferece Shell. Depois configure a URL HTTPS real no build do desktop.
 
-Referências oficiais:
-- https://render.com/docs/deploy-fastapi
-- https://render.com/docs/disks
-- https://render.com/docs/blueprint-spec
+O Render suspende serviços gratuitos após 15 minutos sem tráfego; a retomada pode levar
+cerca de um minuto. O cliente aguarda até 120 segundos por requisição, sem repetir
+chamadas pagas automaticamente. Não implemente pings para impedir a suspensão.
+As cotas gratuitas podem suspender a API ou o banco: essa implantação não tem garantia
+para distribuição pública em grande escala. O Render recomenda Free para testes,
+não para produção. Não usamos o Postgres Free do Render, que expira após 30 dias.
+
+As contas, sessões e cotas ficam no Neon e sobrevivem a reinícios do Render. O backend
+recusa inicializar na configuração Free sem DATABASE_URL PostgreSQL. A conexão valida
+certificado e hostname com TLS. A URL do banco nunca vai para o executável.
+
+Referências oficiais consultadas:
+- https://render.com/docs/free
+- https://neon.com/pricing
+- https://neon.com/blog/how-to-make-the-most-of-neons-free-plan
 - https://developers.openai.com/api/reference/overview#authentication
 
-## Operação pelo terminal do servidor
+## Operação pelo terminal local do administrador
 
-```sh
-nexora-admin create --label cliente-001 --days 7
-nexora-admin list
-nexora-admin extend ID_DO_USUARIO --days 30
-nexora-admin revoke ID_DO_USUARIO
-nexora-admin reissue ID_DO_USUARIO
-nexora-admin backup /var/data/nexora-backup.sqlite3
+Dentro de `fz_optimizer`, instale as dependências do backend no ambiente virtual.
+Execute no seu PowerShell (não no computador dos clientes):
+
+```powershell
+.\.venv-nexora\Scripts\python.exe -m nexora_backend.admin --database-prompt create --label cliente-001 --days 7
+.\.venv-nexora\Scripts\python.exe -m nexora_backend.admin --database-prompt list
+.\.venv-nexora\Scripts\python.exe -m nexora_backend.admin --database-prompt extend ID_DO_USUARIO --days 30
+.\.venv-nexora\Scripts\python.exe -m nexora_backend.admin --database-prompt revoke ID_DO_USUARIO
+.\.venv-nexora\Scripts\python.exe -m nexora_backend.admin --database-prompt reissue ID_DO_USUARIO
 ```
+
+O comando solicita a conexão do Neon em um campo oculto, sem colocá-la no histórico
+do terminal ou em arquivo. O código de ativação retornado é individual; entregue-o
+somente ao cliente correspondente. Nenhuma chave OpenAI é necessária para administrar.
+Faça backups PostgreSQL com `pg_dump` ou as ferramentas do provedor, protegendo a cópia.
+O comando `backup` do utilitário atende somente SQLite local.
 
 - A ativação pode ser resgatada uma única vez, até 7 dias após emissão.
 - O prazo de acesso começa no primeiro resgate, usando o relógio do servidor.
@@ -60,7 +81,7 @@ nexora-admin backup /var/data/nexora-backup.sqlite3
   pode invalidar sessões. Em caso de perda da resposta de ativação/refresh, use `reissue`.
 - O banco guarda hashes dos tokens, nunca seus valores originais. Identificações internas
   e datas de acesso ficam no banco; evite usar dados pessoais desnecessários no label.
-- Faça backup pelo comando acima e transfira uma cópia para armazenamento separado.
+- Faça backup do banco e transfira uma cópia para armazenamento separado.
   Teste restauração com o serviço parado. Uma restauração antiga também restaura cotas
   e revogações antigas: revise os acessos antes de reabrir o serviço.
 
@@ -93,7 +114,7 @@ configure `NEXORA_MODEL` no servidor para um modelo Responses disponível e test
 
 - Rotas: `/health`, `/v1/auth/activate`, `/v1/auth/refresh`, `/v1/me/access`, `/v1/nexora/chat`.
 - Sem endpoint administrativo e sem segredo mestre no desktop. A administração exige
-  acesso ao terminal da hospedagem. Proteja essa conta com autenticação em duas etapas.
+  acesso à conexão PostgreSQL no terminal do administrador. Proteja as contas dos provedores com autenticação em duas etapas.
 - Prompt, modelo, limite de saída e destino OpenAI são controlados no servidor. Não há
   proxy genérico, execução remota de comandos ou ferramentas entregues ao modelo.
 - As respostas da IA são texto. Confirmações e ações Windows continuam exclusivamente locais.
@@ -104,9 +125,10 @@ configure `NEXORA_MODEL` no servidor para um modelo Responses disponível e test
 - O desktop não envia automaticamente relatórios, nomes do computador nem caminhos locais.
   O histórico de chat vive na memória do aplicativo. Contexto explícito é tratado como dado
   de usuário, não como instrução privilegiada.
-- SQLite foi escolhido para uma instância pequena com disco persistente. Não escale
-  para múltiplas máquinas com bancos independentes: cotas e revogações deixariam de ser globais.
-  Para esse crescimento, migrar Store para PostgreSQL e limites distribuídos é necessário.
+- PostgreSQL compartilha cotas e revogações entre instâncias. Um lock transacional
+  serializa operações curtas de autorização para evitar ultrapassar cotas simultaneamente;
+  ele é liberado antes da chamada OpenAI. SQLite permanece disponível apenas como opção
+  local ou com disco persistente; não use SQLite no plano gratuito.
 - Configure monitoração externa de `/health` e alertas de erro/consumo na hospedagem.
 
 ## Execução local
